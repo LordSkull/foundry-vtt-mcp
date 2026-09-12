@@ -10,8 +10,6 @@ import { spawn, ChildProcess } from 'child_process';
 
 import { evaluateLockFile } from './lock.js';
 
-import { createIdleShutdownTracker } from './idle-shutdown.js';
-
 import { config } from './config.js';
 
 import { Logger } from './logger.js';
@@ -1479,44 +1477,7 @@ async function startBackend(): Promise<void> {
 
   // Control channel (TCP JSON-lines)
 
-  // Wrappers no longer kill the backend when their stdio closes (#86), because the
-  // backend is shared and killing it stole the Foundry connection from every other
-  // client. So the backend retires itself instead once no wrapper has been connected
-  // for a while. The window is generous because a client like LM Studio legitimately
-  // reconnects between prompts, and paying the startup cost every turn would be
-  // worse than idling a little. See idle-shutdown.ts for the tracking logic.
-  const IDLE_SHUTDOWN_MS = 10 * 60 * 1000;
-
-  const idleTracker = createIdleShutdownTracker({
-    idleMs: IDLE_SHUTDOWN_MS,
-    onShutdown: () => {
-      logger.info('No wrapper connected for the idle period, shutting down backend');
-      foundryClient.disconnect();
-      releaseLock();
-      process.exit(0);
-    },
-  });
-
   const server = net.createServer(socket => {
-    idleTracker.onClientConnected();
-    logger.debug('Wrapper connected to control channel', {
-      activeClients: idleTracker.activeClients,
-    });
-
-    // `close` always fires, including after `error`, so guard against double counting.
-    let counted = true;
-    const onGone = () => {
-      if (!counted) return;
-      counted = false;
-      idleTracker.onClientDisconnected();
-      logger.debug('Wrapper disconnected from control channel', {
-        activeClients: idleTracker.activeClients,
-      });
-    };
-
-    socket.on('close', onGone);
-    socket.on('error', onGone);
-
     socket.setEncoding('utf8');
 
     let buffer = '';

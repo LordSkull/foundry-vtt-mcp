@@ -155,30 +155,31 @@ class BackendClient {
 
       this.log('startBackend(): spawning', { path: backendPath });
 
-      // Detached so the backend outlives the wrapper that happened to spawn it (#86).
-      // It is a singleton shared by every client, so tying its lifetime to one
-      // wrapper's stdio is what let a short-lived client tear down the Foundry
-      // connection for everyone else. It retires itself when idle instead.
       const child = spawn(process.execPath, [backendPath!], {
-        detached: true,
+        detached: false, // Stay attached to monitor backend
 
         stdio: ['ignore', 'ignore', 'pipe'], // Capture stderr to detect exit
       });
 
+      // Store reference for cleanup
+
       this.backendProcess = child;
+
+      // Monitor backend exit - if it exits cleanly (code 0), this wrapper should also exit
 
       child.on('exit', code => {
         this.backendProcess = null; // Clear reference when backend exits
 
-        // Note: do NOT exit the wrapper here. A clean exit used to mean "lock
-        // failure, nothing to do", but the backend now also exits cleanly when it
-        // retires after being idle — and a wrapper that is still serving a client
-        // must survive that and simply start a new backend on its next request.
-        this.log('startBackend(): backend exited', { exitCode: code });
+        if (code === 0) {
+          this.log('startBackend(): backend exited cleanly (likely lock failure), exiting wrapper');
+
+          process.exit(0); // Exit wrapper when backend fails to acquire lock
+        } else if (code !== null) {
+          this.log('startBackend(): backend exited unexpectedly', { exitCode: code });
+        }
       });
 
-      // Let the wrapper exit independently of the backend it started.
-      child.unref();
+      // Don't unref since we want to monitor the process
 
       resolve();
     });
@@ -264,20 +265,20 @@ class BackendClient {
   }
 
   cleanup() {
-    this.log('cleanup(): disconnecting from backend');
+    this.log('cleanup(): shutting down backend');
 
-    // Deliberately does NOT kill the backend, even one this wrapper spawned (#86).
-    //
-    // The backend is a singleton shared by every wrapper, so killing it here took
-    // the Foundry connection away from any other client still using it. Whichever
-    // wrapper happened to start it effectively held a veto over everyone else,
-    // which defeats the point of the wrapper/backend split. A client that closes
-    // stdio between prompts (LM Studio) therefore tore down the connection on
-    // every turn.
-    //
-    // Orphans are still handled: the backend retires itself once no wrapper has
-    // been connected for a while (see IDLE_SHUTDOWN_MS in backend.ts). Dropping
-    // this socket is what starts that clock.
+    if (this.backendProcess && !this.backendProcess.killed) {
+      try {
+        // Kill backend process - works cross-platform
+
+        this.backendProcess.kill();
+
+        this.log('cleanup(): backend process killed');
+      } catch (e) {
+        this.log('cleanup(): error killing backend', { error: (e as any)?.message });
+      }
+    }
+
     if (this.socket && !this.socket.destroyed) {
       this.socket.destroy();
     }
