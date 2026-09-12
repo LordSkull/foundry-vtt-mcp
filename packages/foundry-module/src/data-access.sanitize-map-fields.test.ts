@@ -20,6 +20,16 @@ function createDnd5eActor(activities: Map<string, unknown>) {
       activities,
       description: { value: 'A feature.' },
     },
+    toObject() {
+      return {
+        _id: this.id,
+        name: this.name,
+        type: this.type,
+        img: this.img,
+        system: this.system,
+        effects: [],
+      };
+    },
   };
 
   const actor = {
