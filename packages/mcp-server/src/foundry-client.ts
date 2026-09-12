@@ -13,21 +13,6 @@ export interface FoundryResponse {
   error?: string;
 }
 
-/**
- * How long a query will wait for the Foundry module to (re)connect before giving
- * up. Short on purpose: this only costs anything when we are already disconnected,
- * and a tool call that is going to fail should fail quickly rather than hang.
- *
- * Exists for #86. A client that closes stdio between prompts (LM Studio does) can
- * leave a freshly started backend listening before the module has reconnected, so
- * the very first tool call raced the reconnect and failed outright. Claude Desktop
- * holds stdio open for the whole session, which is why it never showed this.
- */
-const MODULE_RECONNECT_GRACE_MS = 5000;
-
-/** How often to re-check the connection while inside that grace period. */
-const MODULE_RECONNECT_POLL_MS = 100;
-
 export class FoundryClient {
   private logger: Logger;
   private config: Config['foundry'];
@@ -69,35 +54,11 @@ export class FoundryClient {
     return this.connector.getConnectionType();
   }
 
-  /**
-   * Resolve once the module is connected, or false if the grace period elapses.
-   * Returns immediately when already connected, so the common path is unchanged.
-   */
-  private async waitForModule(timeoutMs: number = MODULE_RECONNECT_GRACE_MS): Promise<boolean> {
-    if (this.connector.isConnected()) return true;
-
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, MODULE_RECONNECT_POLL_MS));
-      if (this.connector.isConnected()) return true;
-    }
-
-    return this.connector.isConnected();
-  }
-
   async query(method: string, data?: any): Promise<any> {
     if (!this.connector.isConnected()) {
-      // Give the module a brief chance to (re)connect rather than failing the
-      // first call outright — see MODULE_RECONNECT_GRACE_MS (#86).
-      this.logger.debug('Module not connected, waiting briefly before query', { method });
-
-      if (!(await this.waitForModule())) {
-        throw new Error(
-          'Foundry VTT module not connected. Please ensure Foundry is running and the MCP Bridge module is enabled.'
-        );
-      }
-
-      this.logger.info('Module connected after brief wait, proceeding with query', { method });
+      throw new Error(
+        'Foundry VTT module not connected. Please ensure Foundry is running and the MCP Bridge module is enabled.'
+      );
     }
 
     this.logger.debug('Sending query to Foundry module', { method, data });

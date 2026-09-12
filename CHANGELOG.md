@@ -33,8 +33,6 @@
 
 - **Large responses timed out over WebRTC** (#89, fixed in #101) — the data channel was created with `maxRetransmits`, making it only partially reliable, so a dropped chunk left the receiver waiting forever for something that would never arrive. The channel is now fully reliable, chunks are paced against the send buffer instead of being dumped into SCTP at once, and a failed reassembly now rejects the waiting query instead of surfacing as a generic timeout.
 
-- **Clients that reconnect between prompts lost the Foundry connection** (#86) — the wrapper killed the shared backend whenever its own stdio closed, even though the backend is a singleton owning the connection to Foundry. It now leaves the backend running and the backend retires itself when no client has been connected for ten minutes. Tool calls also wait briefly for the module to reconnect rather than failing the first call after a fresh backend starts.
-
 - **Five defects in `dnd5e-add-feature`** (#91) — stale skill and ability defaults among them
 
 - **Journal page rename** (#95, fixed in #100)
