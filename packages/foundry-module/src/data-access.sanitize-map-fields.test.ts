@@ -94,4 +94,33 @@ describe('FoundryDataAccess.getCharacterInfo — Map-shaped system fields', () =
 
     expect((result.items[0].system as any).activities).toEqual({});
   });
+
+  it('still recursively sanitizes sensitive fields nested inside a Map value', async () => {
+    // Guards against fixing the Map/{} bug by only shallow-converting Map entries
+    // (e.g. Object.fromEntries) without re-running removeSensitiveFields on each
+    // value — that would stop entries from collapsing to {} but let anything
+    // sensitive nested inside them pass through unsanitized.
+    const activities = new Map([
+      [
+        'aaaaaaaaaaaaaaaa',
+        {
+          _id: 'aaaaaaaaaaaaaaaa',
+          type: 'utility',
+          name: 'Existing Activity',
+          secret: 'should-be-stripped',
+        },
+      ],
+    ]);
+    const { actor } = createDnd5eActor(activities);
+    const dataAccess = setup(actor);
+
+    const result = await dataAccess.getCharacterInfo('Test Character');
+
+    const serializedActivity = (result.items[0].system as any).activities.aaaaaaaaaaaaaaaa;
+    // 1. The Map entry itself is no longer collapsed to {} (the original bug).
+    expect(serializedActivity).toBeDefined();
+    expect(serializedActivity.name).toBe('Existing Activity');
+    // 2. The sensitive nested field is still stripped (recursive sanitization).
+    expect(serializedActivity).not.toHaveProperty('secret');
+  });
 });
