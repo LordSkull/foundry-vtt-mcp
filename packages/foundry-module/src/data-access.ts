@@ -3929,7 +3929,8 @@ export class FoundryDataAccess {
   private removeSensitiveFields(
     obj: any,
     visited: WeakSet<object> = new WeakSet(),
-    depth: number = 0
+    depth: number = 0,
+    path: string[] = []
   ): any {
     // Handle primitives
     if (obj === null || typeof obj !== 'object') {
@@ -3953,7 +3954,9 @@ export class FoundryDataAccess {
     try {
       // Handle arrays
       if (Array.isArray(obj)) {
-        return obj.map(item => this.removeSensitiveFields(item, visited, depth + 1));
+        return obj.map((item, index) =>
+          this.removeSensitiveFields(item, visited, depth + 1, [...path, String(index)])
+        );
       }
 
       // Create a new sanitized object
@@ -3972,7 +3975,7 @@ export class FoundryDataAccess {
 
       for (const key of keys) {
         // Skip sensitive and problematic fields entirely
-        if (this.isSensitiveOrProblematicField(key)) {
+        if (this.isSensitiveOrProblematicField(key, path)) {
           continue;
         }
 
@@ -3988,7 +3991,7 @@ export class FoundryDataAccess {
         }
 
         // Recursively sanitize the value (read only after filter to avoid getter-triggered warnings)
-        sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1);
+        sanitized[key] = this.removeSensitiveFields(obj[key], visited, depth + 1, [...path, key]);
       }
 
       return sanitized;
@@ -4001,7 +4004,7 @@ export class FoundryDataAccess {
   /**
    * Check if a field should be excluded from sanitized output
    */
-  private isSensitiveOrProblematicField(key: string): boolean {
+  private isSensitiveOrProblematicField(key: string, parentPath: string[]): boolean {
     const sensitiveKeys = [
       'password',
       'token',
@@ -4031,13 +4034,15 @@ export class FoundryDataAccess {
       'advancement',
     ];
 
-    // Skip deprecated ability save properties that trigger warnings
-    const deprecatedKeys = [
-      'save', // Skip the deprecated 'save' property on abilities
-    ];
+    // dnd5e retains ability.save as a deprecated accessor which warns when read.
+    // Other save fields, including Activity save configuration, are document data.
+    const isDeprecatedDnd5eAbilitySave =
+      game.system?.id === 'dnd5e' &&
+      key === 'save' &&
+      parentPath[parentPath.length - 2] === 'abilities';
 
     return (
-      sensitiveKeys.includes(key) || problematicKeys.includes(key) || deprecatedKeys.includes(key)
+      sensitiveKeys.includes(key) || problematicKeys.includes(key) || isDeprecatedDnd5eAbilitySave
     );
   }
 
@@ -4046,14 +4051,9 @@ export class FoundryDataAccess {
    */
   private safeJSONStringify(obj: any): string {
     try {
-      return JSON.stringify(obj, (key, value) => {
-        // Skip deprecated properties during JSON serialization
-        if (key === 'save' && typeof value === 'object' && value !== null) {
-          // If this looks like a deprecated ability save object, skip it
-          return undefined;
-        }
-        return value;
-      });
+      // Deprecated accessors have already been excluded without reading them by
+      // the path-aware removeSensitiveFields traversal above.
+      return JSON.stringify(obj);
     } catch (error) {
       console.warn(`[${this.moduleId}] JSON stringify failed, using fallback:`, error);
       return '{}';
