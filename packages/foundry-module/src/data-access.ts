@@ -4030,7 +4030,7 @@ export class FoundryDataAccess {
       'valueOf',
       'toString',
       // dnd5e item leveling metadata; full of cycles back to the actor and other items.
-      // Not gameplay-relevant for LLM consumers.
+      // Detailed Item reads reinsert only the separately sanitized serialized source value.
       'advancement',
     ];
 
@@ -5292,6 +5292,15 @@ export class FoundryDataAccess {
     if (!document) {
       throw new Error(`Document ${documentId} not found in pack ${packId}`);
     }
+    const documentData = document.toObject() as Record<string, any>;
+    const system = this.sanitizeData((document as any).system || {});
+    const fullData = this.sanitizeData(documentData);
+    if (Object.prototype.hasOwnProperty.call(documentData.system ?? {}, 'advancement')) {
+      const advancement = this.sanitizeData(documentData.system.advancement);
+      system.advancement = advancement;
+      fullData.system ??= {};
+      fullData.system.advancement = advancement;
+    }
 
     // Build comprehensive data structure
     const fullEntry: CompendiumEntryFull = {
@@ -5301,8 +5310,8 @@ export class FoundryDataAccess {
       img: (document as any).img || undefined,
       pack: packId,
       packLabel: pack.metadata.label,
-      system: this.sanitizeData((document as any).system || {}),
-      fullData: this.sanitizeData(document.toObject()),
+      system,
+      fullData,
     };
 
     // Add items if the actor has them
@@ -7792,6 +7801,9 @@ export class FoundryDataAccess {
       if (entity) {
         const itemData = serializeDocument(entity);
         const itemSystem = this.sanitizeData(itemData.system ?? {});
+        if (Object.prototype.hasOwnProperty.call(itemData.system ?? {}, 'advancement')) {
+          itemSystem.advancement = this.sanitizeData(itemData.system.advancement);
+        }
         return {
           success: true,
           entityType: 'item',
